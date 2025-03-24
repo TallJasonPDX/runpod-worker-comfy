@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-
 set -e
 
 SNAPSHOT_FILE=$(ls /*snapshot*.json 2>/dev/null | head -n 1)
