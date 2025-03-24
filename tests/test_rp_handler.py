@@ -33,7 +33,7 @@ class TestRunpodWorkerComfy(unittest.TestCase):
         input_data = {"images": [{"name": "image1.png", "image": "base64string"}]}
         validated_data, error = rp_handler.validate_input(input_data)
         self.assertIsNotNone(error)
-        self.assertEqual(error, "Missing 'workflow' parameter")
+        self.assertEqual(error, "Missing 'workflow' or 'workflow_name' parameter")
 
     def test_input_with_invalid_images_structure(self):
         input_data = {
