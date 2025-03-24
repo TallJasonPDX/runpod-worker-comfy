@@ -57,22 +57,36 @@ ADD *snapshot*.json /
 # Restore the snapshot to install custom nodes
 RUN /restore_snapshot.sh
 
-# Install Reactor with full dependencies
-RUN git clone https://github.com/Gourieff/comfyui-reactor /comfyui/custom_nodes/comfyui-reactor && \
+# After the "RUN /restore_snapshot.sh" line, update the custom node installations:
+
+# Install Reactor if not already installed
+RUN if [ ! -d "/comfyui/custom_nodes/comfyui-reactor" ]; then \
+    git clone https://github.com/Gourieff/comfyui-reactor /comfyui/custom_nodes/comfyui-reactor && \
     cd /comfyui/custom_nodes/comfyui-reactor && \
     pip install -r requirements.txt && \
-    python install.py
+    python install.py; \
+else \
+    echo "Reactor already installed, skipping..."; \
+fi
 
-# Install Impact Pack
-RUN git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack /comfyui/custom_nodes/comfyui-impact-pack && \
+# Install Impact Pack if not already installed
+RUN if [ ! -d "/comfyui/custom_nodes/comfyui-impact-pack" ]; then \
+    git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack /comfyui/custom_nodes/comfyui-impact-pack && \
     cd /comfyui/custom_nodes/comfyui-impact-pack && \
     pip install -r requirements.txt && \
-    python install.py
+    python install.py; \
+else \
+    echo "Impact Pack already installed, skipping..."; \
+fi
 
-# Install Base64 to Image node
-RUN git clone https://github.com/asagi4/comfyui-base64-to-image /comfyui/custom_nodes/comfyui-base64-to-image && \
+# Install Base64 to Image node if not already installed
+RUN if [ ! -d "/comfyui/custom_nodes/comfyui-base64-to-image" ]; then \
+    git clone https://github.com/asagi4/comfyui-base64-to-image /comfyui/custom_nodes/comfyui-base64-to-image && \
     cd /comfyui/custom_nodes/comfyui-base64-to-image && \
-    pip install opencv-python
+    pip install opencv-python; \
+else \
+    echo "Base64 to Image already installed, skipping..."; \
+fi
 
 # Create required directories
 RUN mkdir -p /comfyui/input /comfyui/output
