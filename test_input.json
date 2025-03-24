@@ -1,6 +1,6 @@
 {
   "input": {
-    "workflow_name": "lastnurses_api", 
+    "workflow": "lastnurses_api", 
     "images": [
       {
         "name": "test_image.png",
