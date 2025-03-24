@@ -7,7 +7,7 @@ export LD_PRELOAD="${TCMALLOC}"
 # Ensure ComfyUI input directory exists
 mkdir -p /comfyui/input
 
-# Copy overlay images from network volume to ComfyUI input folder
+# Copy overlay images from network volumeto ComfyUI input folder
 if [ -d "/runpod-volume/input" ]; then
   echo "runpod-worker-comfy: Copying input files from network volume"
   cp -r /runpod-volume/input/* /comfyui/input/
