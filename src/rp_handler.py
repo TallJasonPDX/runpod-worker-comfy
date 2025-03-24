@@ -8,6 +8,11 @@ import os
 import requests
 import base64
 from io import BytesIO
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, 
+                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # Time to wait between API check attempts in milliseconds
 COMFY_API_AVAILABLE_INTERVAL_MS = 50
@@ -22,7 +27,52 @@ COMFY_HOST = "127.0.0.1:8188"
 # Enforce a clean state after each job is done
 # see https://docs.runpod.io/docs/handler-additional-controls#refresh-worker
 REFRESH_WORKER = os.environ.get("REFRESH_WORKER", "false").lower() == "true"
+# Directory containing workflow JSON files
+WORKFLOW_DIR = "/runpod-volume/workflows"
 
+def load_workflow_by_name(workflow_name):
+    """
+    Load a workflow from the predefined workflows directory.
+    
+    Args:
+        workflow_name (str): The name of the workflow file
+        
+    Returns:
+        dict: The loaded workflow as a dictionary, or None if not found
+    """
+    # Ensure filename has .json extension
+    if not workflow_name.endswith('.json'):
+        workflow_name = f"{workflow_name}.json"
+        
+    workflow_path = os.path.join(WORKFLOW_DIR, workflow_name)
+    
+    if not os.path.exists(workflow_path):
+        logging.error(f"Workflow not found: {workflow_path}")
+        return None
+        
+    try:
+        with open(workflow_path, 'r') as f:
+            workflow_data = json.load(f)
+            logging.info(f"Successfully loaded workflow: {workflow_name}")
+            
+            # Check if the workflow is already in the expected format
+            if isinstance(workflow_data, dict) and not "prompt" in workflow_data:
+                return workflow_data
+            # If it's in ComfyUI API format with 'prompt'
+            elif isinstance(workflow_data, dict) and "prompt" in workflow_data:
+                return workflow_data["prompt"] 
+            # If it's wrapped in an input structure
+            elif "input" in workflow_data and "workflow" in workflow_data["input"]:
+                return workflow_data["input"]["workflow"]
+            else:
+                logging.warning(f"Workflow format for {workflow_name} is unknown, returning as-is")
+                return workflow_data
+    except json.JSONDecodeError as e:
+        logging.error(f"Invalid JSON in workflow file {workflow_name}: {str(e)}")
+        return None
+    except Exception as e:
+        logging.error(f"Error loading workflow {workflow_name}: {str(e)}")
+        return None
 
 def validate_input(job_input):
     """
@@ -46,10 +96,18 @@ def validate_input(job_input):
         except json.JSONDecodeError:
             return None, "Invalid JSON format in input"
 
-    # Validate 'workflow' in input
+    # Validate that either 'workflow' or 'workflow_name' is provided
     workflow = job_input.get("workflow")
-    if workflow is None:
-        return None, "Missing 'workflow' parameter"
+    workflow_name = job_input.get("workflow_name")
+    
+    if not workflow and not workflow_name:
+        return None, "Missing 'workflow' or 'workflow_name' parameter"
+    
+    # If workflow_name is provided, load the workflow
+    if workflow_name:
+        workflow = load_workflow_by_name(workflow_name)
+        if not workflow:
+            return None, f"Could not load workflow: {workflow_name}"
 
     # Validate 'images' in input, if provided
     images = job_input.get("images")
@@ -64,7 +122,6 @@ def validate_input(job_input):
 
     # Return validated data and no error
     return {"workflow": workflow, "images": images}, None
-
 
 def check_server(url, retries=500, delay=50):
     """
@@ -287,10 +344,13 @@ def handler(job):
         dict: A dictionary containing either an error message or a success status with generated images.
     """
     job_input = job["input"]
+    
+    logging.info(f"Processing job: {job['id']}")
 
     # Make sure that the input is valid
     validated_data, error_message = validate_input(job_input)
     if error_message:
+        logging.error(f"Input validation error: {error_message}")
         return {"error": error_message}
 
     # Extract validated data
@@ -308,18 +368,20 @@ def handler(job):
     upload_result = upload_images(images)
 
     if upload_result["status"] == "error":
+        logging.error(f"Image upload error: {upload_result['message']}")
         return upload_result
 
     # Queue the workflow
     try:
         queued_workflow = queue_workflow(workflow)
         prompt_id = queued_workflow["prompt_id"]
-        print(f"runpod-worker-comfy - queued workflow with ID {prompt_id}")
+        logging.info(f"Queued workflow with ID {prompt_id}")
     except Exception as e:
+        logging.error(f"Error queuing workflow: {str(e)}")
         return {"error": f"Error queuing workflow: {str(e)}"}
 
     # Poll for completion
-    print(f"runpod-worker-comfy - wait until image generation is complete")
+    logging.info(f"Waiting until image generation is complete")
     retries = 0
     try:
         while retries < COMFY_POLLING_MAX_RETRIES:
@@ -333,17 +395,19 @@ def handler(job):
                 time.sleep(COMFY_POLLING_INTERVAL_MS / 1000)
                 retries += 1
         else:
+            logging.error("Max retries reached waiting for image generation")
             return {"error": "Max retries reached while waiting for image generation"}
     except Exception as e:
+        logging.error(f"Error waiting for image generation: {str(e)}")
         return {"error": f"Error waiting for image generation: {str(e)}"}
 
     # Get the generated image and return it as URL in an AWS bucket or as base64
     images_result = process_output_images(history[prompt_id].get("outputs"), job["id"])
-
+    
+    logging.info(f"Image processing complete with status: {images_result['status']}")
     result = {**images_result, "refresh_worker": REFRESH_WORKER}
 
     return result
-
 
 # Start the handler only if this script is run directly
 if __name__ == "__main__":

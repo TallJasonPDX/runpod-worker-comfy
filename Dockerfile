@@ -51,6 +51,11 @@ ADD *snapshot*.json /
 # Restore the snapshot to install custom nodes
 RUN /restore_snapshot.sh
 
+# After the line "RUN /restore_snapshot.sh"
+RUN git clone https://github.com/Gourieff/comfyui-reactor /comfyui/custom_nodes/comfyui-reactor && \
+    cd /comfyui/custom_nodes/comfyui-reactor && \
+    python install.py
+
 # Start container
 CMD ["/start.sh"]
 
