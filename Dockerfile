@@ -11,12 +11,18 @@ ENV PYTHONUNBUFFERED=1
 ENV CMAKE_BUILD_PARALLEL_LEVEL=8
 
 # Install Python, git and other necessary tools
+# Added libgthread-2.0-0 and other dependencies needed for OpenCV and GUI libraries
 RUN apt-get update && apt-get install -y \
     python3.10 \
     python3-pip \
     git \
     wget \
     libgl1 \
+    libglib2.0-0 \
+    libgtk2.0-dev \
+    libsm6 \
+    libxrender1 \
+    libxext-dev \
     && ln -sf /usr/bin/python3.10 /usr/bin/python \
     && ln -sf /usr/bin/pip3 /usr/bin/pip
 
@@ -51,10 +57,25 @@ ADD *snapshot*.json /
 # Restore the snapshot to install custom nodes
 RUN /restore_snapshot.sh
 
-# After the line "RUN /restore_snapshot.sh"
+# Install Reactor with full dependencies
 RUN git clone https://github.com/Gourieff/comfyui-reactor /comfyui/custom_nodes/comfyui-reactor && \
     cd /comfyui/custom_nodes/comfyui-reactor && \
+    pip install -r requirements.txt && \
     python install.py
+
+# Install Impact Pack
+RUN git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack /comfyui/custom_nodes/comfyui-impact-pack && \
+    cd /comfyui/custom_nodes/comfyui-impact-pack && \
+    pip install -r requirements.txt && \
+    python install.py
+
+# Install Base64 to Image node
+RUN git clone https://github.com/asagi4/comfyui-base64-to-image /comfyui/custom_nodes/comfyui-base64-to-image && \
+    cd /comfyui/custom_nodes/comfyui-base64-to-image && \
+    pip install opencv-python
+
+# Create required directories
+RUN mkdir -p /comfyui/input /comfyui/output
 
 # Start container
 CMD ["/start.sh"]
