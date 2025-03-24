@@ -1,6 +1,6 @@
 {
   "input": {
-    "workflow_name": "lastnurses_ap",  // Name of workflow JSON file stored in /runpod-volume/workflows
+    "workflow_name": "lastnurses_api", 
     "images": [
       {
         "name": "test_image.png",
