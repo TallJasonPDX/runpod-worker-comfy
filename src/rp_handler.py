@@ -160,13 +160,6 @@ def check_server(url, retries=500, delay=50):
 def upload_images(images):
     """
     Upload a list of base64 encoded images to the ComfyUI server using the /upload/image endpoint.
-
-    Args:
-        images (list): A list of dictionaries, each containing the 'name' of the image and the 'image' as a base64 encoded string.
-        server_address (str): The address of the ComfyUI server.
-
-    Returns:
-        list: A list of responses from the server for each image upload.
     """
     if not images:
         return {"status": "success", "message": "No images to upload", "details": []}
@@ -179,20 +172,32 @@ def upload_images(images):
     for image in images:
         name = image["name"]
         image_data = image["image"]
-        blob = base64.b64decode(image_data)
+        
+        # Handle data URL format
+        if image_data.startswith("data:"):
+            base64_prefix_end = image_data.find(",")
+            if base64_prefix_end != -1:
+                image_data = image_data[base64_prefix_end + 1:]
+                logging.info(f"Extracted base64 data from data URL for {name}")
+        
+        try:
+            blob = base64.b64decode(image_data)
+            
+            # Prepare the form data
+            files = {
+                "image": (name, BytesIO(blob), "image/png"),
+                "overwrite": (None, "true"),
+            }
 
-        # Prepare the form data
-        files = {
-            "image": (name, BytesIO(blob), "image/png"),
-            "overwrite": (None, "true"),
-        }
-
-        # POST request to upload the image
-        response = requests.post(f"http://{COMFY_HOST}/upload/image", files=files)
-        if response.status_code != 200:
-            upload_errors.append(f"Error uploading {name}: {response.text}")
-        else:
-            responses.append(f"Successfully uploaded {name}")
+            # POST request to upload the image
+            response = requests.post(f"http://{COMFY_HOST}/upload/image", files=files)
+            if response.status_code != 200:
+                upload_errors.append(f"Error uploading {name}: {response.text}")
+            else:
+                responses.append(f"Successfully uploaded {name}")
+        except Exception as e:
+            logging.error(f"Failed to decode base64 for {name}: {str(e)}")
+            upload_errors.append(f"Error decoding {name}: {str(e)}")
 
     if upload_errors:
         print(f"runpod-worker-comfy - image(s) upload with errors")
@@ -258,91 +263,68 @@ def base64_encode(img_path):
 
 
 def process_output_images(outputs, job_id):
-    """
-    This function takes the "outputs" from image generation and the job ID,
-    then determines the correct way to return the image, either as a direct URL
-    to an AWS S3 bucket or as a base64 encoded string, depending on the
-    environment configuration.
-
-    Args:
-        outputs (dict): A dictionary containing the outputs from image generation,
-                        typically includes node IDs and their respective output data.
-        job_id (str): The unique identifier for the job.
-
-    Returns:
-        dict: A dictionary with the status ('success' or 'error') and the message,
-              which is either the URL to the image in the AWS S3 bucket or a base64
-              encoded string of the image. In case of error, the message details the issue.
-
-    The function works as follows:
-    - It first determines the output path for the images from an environment variable,
-      defaulting to "/comfyui/output" if not set.
-    - It then iterates through the outputs to find the filenames of the generated images.
-    - After confirming the existence of the image in the output folder, it checks if the
-      AWS S3 bucket is configured via the BUCKET_ENDPOINT_URL environment variable.
-    - If AWS S3 is configured, it uploads the image to the bucket and returns the URL.
-    - If AWS S3 is not configured, it encodes the image in base64 and returns the string.
-    - If the image file does not exist in the output folder, it returns an error status
-      with a message indicating the missing image file.
-    """
-
+    """Process output images from ComfyUI workflow execution"""
     # The path where ComfyUI stores the generated images
     COMFY_OUTPUT_PATH = os.environ.get("COMFY_OUTPUT_PATH", "/comfyui/output")
-
-    output_images = {}
-
+    
+    # Collect all generated image paths
+    image_paths = []
+    
+    # Method 1: Parse from outputs
     for node_id, node_output in outputs.items():
         if "images" in node_output:
             for image in node_output["images"]:
-                output_images = os.path.join(image["subfolder"], image["filename"])
-
-    print(f"runpod-worker-comfy - image generation is done")
-
-    # expected image output folder
-    local_image_path = f"{COMFY_OUTPUT_PATH}/{output_images}"
-
-    print(f"runpod-worker-comfy - {local_image_path}")
-
-    # The image is in the output folder
-    if os.path.exists(local_image_path):
+                image_path = os.path.join(COMFY_OUTPUT_PATH, image.get("subfolder", ""), image["filename"])
+                if os.path.exists(image_path):
+                    image_paths.append(image_path)
+                    logging.info(f"Found image in outputs: {image_path}")
+    
+    # Method 2: If no images found, try scanning the output directory for recent files
+    if not image_paths:
+        logging.info("No images found in outputs, scanning output directory for recent files")
+        current_time = time.time()
+        # Look for files created in the last 30 seconds
+        for root, dirs, files in os.walk(COMFY_OUTPUT_PATH):
+            for file in files:
+                if file.endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                    file_path = os.path.join(root, file)
+                    file_time = os.path.getmtime(file_path)
+                    # If file was created in the last 30 seconds
+                    if current_time - file_time < 30:
+                        image_paths.append(file_path)
+                        logging.info(f"Found recent image in output directory: {file_path}")
+    
+    # Process the first image found
+    if image_paths:
+        local_image_path = image_paths[0]  # Process the first image for now
+        
+        logging.info(f"Processing output image: {local_image_path}")
+        
         if os.environ.get("BUCKET_ENDPOINT_URL", False):
             # URL to image in AWS S3
             image = rp_upload.upload_image(job_id, local_image_path)
-            print(
-                "runpod-worker-comfy - the image was generated and uploaded to AWS S3"
-            )
+            logging.info("Image was generated and uploaded to AWS S3")
         else:
             # base64 image
             image = base64_encode(local_image_path)
-            print(
-                "runpod-worker-comfy - the image was generated and converted to base64"
-            )
-
+            logging.info("Image was generated and converted to base64")
+            
         return {
             "status": "success",
             "message": image,
+            "path": local_image_path,
+            "all_images": image_paths  # Return all found images for reference
         }
     else:
-        print("runpod-worker-comfy - the image does not exist in the output folder")
+        logging.error("No output images found")
         return {
             "status": "error",
-            "message": f"the image does not exist in the specified output folder: {local_image_path}",
+            "message": "No output images found in the output directory"
         }
 
 
 def handler(job):
-    """
-    The main function that handles a job of generating an image.
-
-    This function validates the input, sends a prompt to ComfyUI for processing,
-    polls ComfyUI for result, and retrieves generated images.
-
-    Args:
-        job (dict): A dictionary containing job details and input parameters.
-
-    Returns:
-        dict: A dictionary containing either an error message or a success status with generated images.
-    """
+    """The main function that handles a job of generating an image."""
     job_input = job["input"]
     
     logging.info(f"Processing job: {job['id']}")
@@ -364,12 +346,36 @@ def handler(job):
         COMFY_API_AVAILABLE_INTERVAL_MS,
     )
 
-    # Upload images if they exist
-    upload_result = upload_images(images)
-
-    if upload_result["status"] == "error":
-        logging.error(f"Image upload error: {upload_result['message']}")
-        return upload_result
+    # Find and inject images directly into LoadImageFromBase64 nodes
+    if images:
+        base64_nodes_found = False
+        for node_id, node_data in workflow.items():
+            if node_data.get("class_type") in ["LoadImageFromBase64", "Base64ToImage"]:
+                # We found a node that can take base64 image data directly
+                for image in images:
+                    # Get image data, handle data URL format
+                    image_data = image["image"]
+                    if image_data.startswith("data:"):
+                        base64_prefix_end = image_data.find(",")
+                        if base64_prefix_end != -1:
+                            image_data = image_data[base64_prefix_end + 1:]
+                            logging.info(f"Extracted base64 data from data URL for injecting into node")
+                    
+                    # Inject the image data into the workflow
+                    workflow[node_id]["inputs"]["data"] = image_data
+                    logging.info(f"Injected base64 image data into node {node_id} of type {node_data.get('class_type')}")
+                    base64_nodes_found = True
+                    break  # Only inject into the first matching node for now
+                
+                if base64_nodes_found:
+                    break  # Stop searching for nodes after first injection
+        
+        # If we didn't find any Base64 nodes, upload images normally
+        if not base64_nodes_found:
+            upload_result = upload_images(images)
+            if upload_result["status"] == "error":
+                logging.error(f"Image upload error: {upload_result['message']}")
+                return upload_result
 
     # Queue the workflow
     try:
@@ -379,6 +385,8 @@ def handler(job):
     except Exception as e:
         logging.error(f"Error queuing workflow: {str(e)}")
         return {"error": f"Error queuing workflow: {str(e)}"}
+
+    # Rest of the function remains the same...
 
     # Poll for completion
     logging.info(f"Waiting until image generation is complete")
