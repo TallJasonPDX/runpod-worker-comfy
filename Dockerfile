@@ -92,11 +92,6 @@ fi
 # Create required directories
 RUN mkdir -p /comfyui/input /comfyui/output
 
-
-# Copy custom nodes from network volume
-COPY /src/copy_from_network_volume.sh /copy_from_network_volume.sh
-RUN chmod +x /copy_from_network_volume.sh
-
 # Start container
 CMD ["/start.sh"]
 
